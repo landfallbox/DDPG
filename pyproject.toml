@@ -1,0 +1,12 @@
+[project]
+name = "ddpg"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=1.2.0",
+    "matplotlib>=3.10.6",
+    "scipy>=1.16.2",
+    "torch>=2.8.0",
+]

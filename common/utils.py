@@ -1,10 +1,5 @@
 """
-@Project     : DDPG 
-@File        : util.py
-@IDE         : PyCharm 
-@Author      : landfallbox
-@Date        : 2025/9/10 星期三 14:43 
-@Description : 提供工具函数
+ASHRAE 专用工具函数 (已移除 Gym 兼容逻辑)
 """
 from copy import deepcopy
 import os
@@ -170,130 +165,69 @@ def to_numpy(var):
         return var.detach().cpu().numpy()
     return np.array(var)
 
-def train(num_iterations, agent, env, evaluate, validate_steps, output, warmup, max_episode_length=None, debug=False):
-    """Train the agent in the environment.
-    
-    Parameters:
-        num_iterations: int
-            Number of training iterations.
-        agent: Agent
-            The agent to be trained.
-        env: gym.Env
-            The environment to train the agent in.
-        evaluate: Evaluator or None
-            Evaluator for evaluating the agent during training. If None, no evaluation is performed.
-        validate_steps: int
-            Interval (in timesteps) between evaluations.
-        output: str
-            Path to save models and results.
-        warmup: int
-            Number of initial timesteps to fill the replay memory before training starts.
-        max_episode_length: int or None
-            Maximum length of an episode. If None, episodes can run indefinitely.
-        debug: bool
-            If True, debug information will be printed. Default is False.
+def train(num_iterations, agent, env, evaluate, validate_steps, output, warmup, max_episode_length=None, debug=False, eval_env=None):
+    """训练循环 (ASHRAE 专用)
+    仅假设 env.reset() -> (obs, info) 且 env.step() -> (obs, reward, terminated, truncated, info)
     """
     agent.is_training = True
     step = episode = episode_steps = 0
     episode_reward = 0.
     observation = None
+    progress_interval = max(1, num_iterations // 20)
 
     while step < num_iterations:
-        # reset if it is the start of episode
         if observation is None:
-            # Gymnasium API: reset returns (obs, info)
             obs_reset = env.reset()
-            observation = deepcopy(obs_reset[0] if isinstance(obs_reset, tuple) else obs_reset)
+            observation = deepcopy(obs_reset[0])
             agent.reset(observation)
-
-        # agent pick action ...
         if step <= warmup:
             action = agent.random_action()
         else:
             action = agent.select_action(observation)
-
-        # env response with next_observation, reward, terminate_info (Gymnasium API)
-        step_out = env.step(action)
-        if len(step_out) == 5:
-            observation2, reward, terminated, truncated, info = step_out
-            done = bool(terminated or truncated)
-        else:
-            # fallback to old Gym API
-            observation2, reward, done, info = step_out
-        observation2 = deepcopy(observation2)
-
+        # ASHRAE env fixed 5-tuple
+        observation2, reward, terminated, truncated, info = env.step(action)
+        done = bool(terminated or truncated)
         if max_episode_length and episode_steps >= (max_episode_length - 1):
             done = True
-
-        # agent observe and update policy
         agent.observe(reward, observation2, done)
         if step > warmup:
             agent.update_policy()
-
-        # [optional] evaluate
         if evaluate is not None and validate_steps > 0 and step % validate_steps == 0:
-            policy = lambda x: agent.select_action(x, decay_epsilon=False)
-            validate_reward = evaluate(env, policy, debug=False, visualize=False)
-            
-            if debug: 
-                logger.debug('[Evaluate] Step_{:07d}: mean_reward:{}'.format(step, validate_reward))
-
-        # [optional] save intermideate model
+            policy = lambda x: agent.select_action(x, decay_epsilon=False, add_noise=False)
+            _eval_env = eval_env if eval_env is not None else env
+            validate_reward = evaluate(_eval_env, policy, debug=False, visualize=False)
+            if debug:
+                extra = getattr(evaluate, 'last_eval_stats', {})
+                logger.debug('[Evaluate] Step_{:07d}: reward:{} mse:{:.6f} mae:{:.6f}'.format(
+                    step, validate_reward, extra.get('mse', float('nan')), extra.get('mae', float('nan'))))
         if step % int(num_iterations / 3) == 0:
             agent.save_model(output)
-
-        # update
         step += 1
         episode_steps += 1
         episode_reward += reward
         observation = deepcopy(observation2)
-
-        if done:  # end of episode
-            if debug: logger.debug('#{}: episode_reward:{} steps:{}'.format(episode, episode_reward, step))
-
-            agent.memory.append(
-                observation,
-                agent.select_action(observation),
-                0., False
-            )
-
-            # reset
+        if debug and (step % progress_interval == 0 or step == 1 or step == num_iterations):
+            pct = step / num_iterations * 100.0
+            logger.debug(
+                f"[Train] step={step}/{num_iterations} ({pct:5.1f}%) episode={episode} ep_steps={episode_steps} "
+                f"ep_reward={episode_reward:.4f} epsilon={agent.epsilon:.3f}")
+        if done:
+            if debug:
+                logger.debug('#{}: episode_reward:{} steps:{}'.format(episode, episode_reward, step))
             observation = None
             episode_steps = 0
             episode_reward = 0.
             episode += 1
 
 def test(num_episodes, agent, env, evaluate, model_path, visualize=True, debug=False):
-    """Test the agent in the environment.
-    
-    Parameters:
-        num_episodes: int
-            Number of episodes to test.
-        agent: Agent
-            The agent to be tested.
-        env: gym.Env
-            The environment to test the agent in.
-        evaluate: Evaluator or None
-            Evaluator for evaluating the agent during testing. If None, no evaluation is performed.
-        model_path: str
-            Path to the saved model weights.
-        visualize: bool
-            If True, the environment will be rendered during testing. Default is True.
-        debug: bool
-            If True, debug information will be printed. Default is False.
-    """
+    """测试 (ASHRAE 专用)"""
     agent.load_weights(model_path)
     agent.is_training = False
     agent.eval()
-    policy = lambda x: agent.select_action(x, decay_epsilon=False)
-
+    policy = lambda x: agent.select_action(x, decay_epsilon=False, add_noise=False)
     for i in range(num_episodes):
         validate_reward = evaluate(env, policy, debug=debug, visualize=visualize, save=False)
-        if debug: 
-            logger.debug('[Evaluate] #{}: mean_reward:{}'.format(i, validate_reward))
-
-def main():
-    logger.info(get_output_folder(results_dir, "Pendulum-v0"))
-
-if __name__ == '__main__':
-    main()
+        if debug:
+            extra = getattr(evaluate, 'last_eval_stats', {})
+            logger.debug('[Evaluate] #{}: reward:{} mse:{:.6f} mae:{:.6f}'.format(
+                i, validate_reward, extra.get('mse', float('nan')), extra.get('mae', float('nan'))))

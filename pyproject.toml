@@ -1,12 +1,14 @@
 [project]
 name = "ddpg"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "DDPG (ASHRAE-only edition) for tabular energy prediction framed as RL/bandit."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.9,<3.10"
 dependencies = [
-    "gymnasium>=1.2.0",
-    "matplotlib>=3.10.6",
-    "scipy>=1.16.2",
-    "torch>=2.8.0",
+    "matplotlib",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "torch",
+    "deep-forest"
 ]

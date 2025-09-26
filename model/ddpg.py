@@ -62,11 +62,8 @@ class DDPG(object):
     def __init__(self, nb_states, nb_actions, args):
         if args.seed > 0:
             self.seed(args.seed)
-
         self.nb_states = nb_states
         self.nb_actions= nb_actions
-        
-        # Create Actor and Critic Network
         net_cfg = {
             'hidden1':args.hidden1, 
             'hidden2':args.hidden2, 
@@ -75,29 +72,21 @@ class DDPG(object):
         self.actor = Actor(self.nb_states, self.nb_actions, **net_cfg)
         self.actor_target = Actor(self.nb_states, self.nb_actions, **net_cfg)
         self.actor_optim  = Adam(self.actor.parameters(), lr=args.prate)
-
         self.critic = Critic(self.nb_states, self.nb_actions, **net_cfg)
         self.critic_target = Critic(self.nb_states, self.nb_actions, **net_cfg)
         self.critic_optim  = Adam(self.critic.parameters(), lr=args.rate)
-
-        hard_update(self.actor_target, self.actor) # Make sure target is with the same weight
+        hard_update(self.actor_target, self.actor)
         hard_update(self.critic_target, self.critic)
-        
-        #Create replay buffer
         self.memory = SequentialMemory(limit=args.rmsize, window_length=args.window_length)
         self.random_process = OrnsteinUhlenbeckProcess(size=nb_actions, theta=args.ou_theta, mu=args.ou_mu, sigma=args.ou_sigma)
-
-        # Hyper-parameters
         self.batch_size = args.bsize
         self.tau = args.tau
         self.discount = args.discount
         self.depsilon = 1.0 / args.epsilon
- 
         self.epsilon = 1.0
-        self.s_t = None # Most recent state
-        self.a_t = None # Most recent action
+        self.s_t = None
+        self.a_t = None
         self.is_training = True
- 
         if USE_CUDA: self.cuda()
 
     def update_policy(self):
@@ -166,16 +155,21 @@ class DDPG(object):
         self.a_t = action
         return action
     
-    def select_action(self, s_t, decay_epsilon=True):
-        action = to_numpy(
-            self.actor(to_tensor(np.array([s_t])))
-        ).squeeze(0)
-        action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
+    def select_action(self, s_t, decay_epsilon=True, add_noise=True):
+        """Select action from current policy.
+        Parameters:
+            s_t: np.ndarray state
+            decay_epsilon: bool, whether to decay exploration scale
+            add_noise: bool, whether to add exploration noise (set False in evaluation)
+        """
+        action = to_numpy(self.actor(to_tensor(np.array([s_t])))).squeeze(0)
+        if add_noise and self.is_training and self.epsilon > 0:
+            action += self.random_process.sample() * self.epsilon
         action = np.clip(action, -1., 1.)
-
-        if decay_epsilon:
+        if decay_epsilon and self.is_training:
             self.epsilon -= self.depsilon
-        
+            if self.epsilon < 0:
+                self.epsilon = 0.0
         self.a_t = action
         return action
     
